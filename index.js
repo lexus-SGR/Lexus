@@ -1,220 +1,138 @@
-import {
-  makeWASocket,
+import pkg from '@whiskeysockets/baileys';
+const {
+  default: makeWASocket,
   useMultiFileAuthState,
+  DisconnectReason,
   fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-} from '@whiskeysockets/baileys';
+  makeCacheableSignalKeyStore
+} = pkg;
 
-import express from 'express';
-import pino from 'pino';
-import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import qrcode from 'qrcode-terminal';
-import QRCode from 'qrcode';
+import fs from 'fs'
+import P from 'pino'
+import dotenv from 'dotenv'
+import { Boom } from '@hapi/boom'
+dotenv.config()
 
-dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const useLogger = pino({ level: 'silent' });
-const msgRetryCounterCache = {};
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-let globalSock;
-let qrImageData = null; // global QR image data
+const PREFIX = process.env.PREFIX || 'apo@'
+const OWNER = process.env.OWNER_NUMBER + '255760317060@s.whatsapp.net'
 
 const startSock = async () => {
-  const { state, saveCreds } = await useMultiFileAuthState('session');
-  const { version } = await fetchLatestBaileysVersion();
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info')
+  const { version } = await fetchLatestBaileysVersion()
 
   const sock = makeWASocket({
     version,
-    logger: useLogger,
     printQRInTerminal: true,
     auth: {
       creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, useLogger),
+      keys: makeCacheableSignalKeyStore(state.keys, P({ level: 'silent' })),
     },
-    msgRetryCounterCache,
-    generateHighQualityLinkPreview: true,
-  });
+    logger: P({ level: 'silent' }),
+    browser: ['Ben Whittaker Tech', 'Chrome', '1.0'],
+    syncFullHistory: false,
+  })
 
-  sock.ev.on('creds.update', saveCreds);
-  globalSock = sock;
-  globalSock.authState = { creds: state.creds, keys: state.keys };
+  sock.ev.on('creds.update', saveCreds)
 
-  // QR CODE listener
-  sock.ev.on('connection.update', async (update) => {
-    const { qr } = update;
-    if (qr) {
-      qrcode.generate(qr, { small: true });
-      qrImageData = await QRCode.toDataURL(qr);
-    }
-  });
-
-  // Optional features
-  if (process.env.FAKE_TYPING === 'on') {
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      const m = messages[0];
-      if (!m.message) return;
-      await sock.sendPresenceUpdate('composing', m.key.remoteJid);
-      setTimeout(() => sock.sendPresenceUpdate('paused', m.key.remoteJid), 2000);
-    });
-  }
-
-  if (process.env.FAKE_RECORDING === 'on') {
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      const m = messages[0];
-      if (!m.message) return;
-      await sock.sendPresenceUpdate('recording', m.key.remoteJid);
-      setTimeout(() => sock.sendPresenceUpdate('paused', m.key.remoteJid), 2000);
-    });
-  }
-
-  if (process.env.AUTO_VIEW_ONCE === 'on') {
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      const m = messages[0];
-      if (m.message?.viewOnceMessageV2) {
-        let msg = m.message.viewOnceMessageV2.message;
-        m.message = msg;
-        await sock.sendMessage(m.key.remoteJid, { forward: m }, { quoted: m });
-      }
-    });
-  }
-
-  if (process.env.ANTIDELETE === 'on') {
-    sock.ev.on('messages.update', async (updates) => {
-      for (const update of updates) {
-        if (update.update?.messageStubType === 0) continue;
-        if (update.messageStubType === 1 && update.key?.remoteJid?.endsWith('@g.us')) {
-          const original = update.message;
-          if (original) {
-            await sock.sendMessage(update.key.remoteJid, {
-              text: `Message deleted:\n\n${JSON.stringify(original, null, 2)}`,
-            });
-          }
-        }
-      }
-    });
-  }
-
+  // Status auto view
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    const m = messages[0];
-    if (!m.message || m.key.fromMe) return;
+    const msg = messages[0]
+    if (!msg.message) return
+    if (msg.key.remoteJid === 'status@broadcast') {
+      await sock.readMessages([msg.key])
+    }
+  })
 
-    const body =
-      m.message.conversation ||
-      m.message.extendedTextMessage?.text ||
-      m.message.imageMessage?.caption || '';
+  // Auto open view-once in groups if you are admin
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0]
+    if (!msg.message || !msg.message?.viewOnceMessageV2) return
+    const sender = msg.key.remoteJid
+    if (!sender.endsWith('@g.us')) return
 
-    const prefix = '!';
-    if (!body.startsWith(prefix)) return;
+    try {
+      const metadata = await sock.groupMetadata(sender)
+      const groupAdmins = metadata.participants.filter(p => p.admin !== null).map(p => p.id)
+      const isUserAdmin = groupAdmins.includes(OWNER)
+      if (!isUserAdmin) return
 
-    const args = body.slice(prefix.length).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+      const originalMsg = msg.message.viewOnceMessageV2.message
+      await sock.sendMessage(sender, {
+        text: `🕵️ View-Once message opened by bot:\n\n${JSON.stringify(originalMsg, null, 2)}`
+      })
+    } catch (e) {
+      console.error('View-once error:', e)
+    }
+  })
 
-    if (command === 'getcode') {
-      if (!sock.authState.creds.registered) {
-        try {
-          const code = await sock.requestPairingCode(m.key.remoteJid);
-          await sock.sendMessage(m.key.remoteJid, {
-            text: `🔐 *Pairing Code*\n\nUse this code to link your device:\n\n*${code}*\n\nGo to WhatsApp > Linked Devices > Link with code.`,
-          });
-        } catch {
-          await sock.sendMessage(m.key.remoteJid, {
-            text: 'Failed to generate pairing code.',
-          });
-        }
-      } else {
-        await sock.sendMessage(m.key.remoteJid, { text: '✅ Bot is already paired.' });
+  // Command handler + link detection
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0]
+    if (!msg.message || msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') return
+
+    const sender = msg.key.remoteJid
+    const type = Object.keys(msg.message)[0]
+    const body = msg.message?.conversation || msg.message[type]?.text || ''
+    const isGroup = sender.endsWith('@g.us')
+    const fromOwner = msg.key.participant === OWNER || sender === OWNER
+
+    // Prefix command handling
+    if (body.startsWith(PREFIX)) {
+      const command = body.slice(PREFIX.length).trim().toLowerCase()
+
+      if (command === 'ping') {
+        await sock.sendMessage(sender, { text: '🥊 Pong! Bot iko kazini.' }, { quoted: msg })
+      }
+
+      if (command === 'menu') {
+        await sock.sendMessage(sender, {
+          text: `Ben Whittaker Bot Commands:\n\n${PREFIX}ping\n${PREFIX}menu`
+        }, { quoted: msg })
       }
     }
-  });
 
-  sock.ev.on('group-participants.update', async (update) => {
-    if (update.action === 'remove') {
-      const num = update.participants[0];
-      await sock.sendMessage(update.id, {
-        text: `@${num.split('@')[0]} has left the group.`,
-        mentions: [num],
-      });
+    // Link detection
+    if (isGroup && /https?:\/\//i.test(body)) {
+      try {
+        const metadata = await sock.groupMetadata(sender)
+        const groupAdmins = metadata.participants.filter(p => p.admin !== null).map(p => p.id)
+        const isBotAdmin = groupAdmins.includes(sock.user.id)
+        const isUserAdmin = groupAdmins.includes(msg.key.participant)
+
+        if (isBotAdmin && !isUserAdmin) {
+          await sock.sendMessage(sender, {
+            text: `⛔ Link detected from @${msg.key.participant.split('@')[0]} — removing...`,
+            mentions: [msg.key.participant]
+          })
+          await sock.groupParticipantsUpdate(sender, [msg.key.participant], 'remove')
+        } else if (!isBotAdmin) {
+          await sock.sendMessage(sender, { text: '🚫 Siwezi kutoa mtu, mimi sio admin.' }, { quoted: msg })
+        } else if (isUserAdmin) {
+          await sock.sendMessage(sender, {
+            text: `⚠️ Huyu ni admin @${msg.key.participant.split('@')[0]} — siwezi kumtoa.`,
+            mentions: [msg.key.participant]
+          }, { quoted: msg })
+        }
+      } catch (err) {
+        console.error('Group error:', err)
+      }
     }
-  });
+  })
 
-  return sock;
-};
-
-startSock();
-
-// Routes
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Pairing Code page
-app.get('/paircode', async (req, res) => {
-  try {
-    if (globalSock && !globalSock.authState.creds.registered) {
-      const code = await globalSock.requestPairingCode("user@example.com");
-      res.send(`
-        <html>
-          <head>
-            <title>Pairing Code</title>
-            <style>
-              body {
-                font-family: sans-serif;
-                text-align: center;
-                padding: 50px;
-                background-color: #f9f9f9;
-              }
-              h1 {
-                font-size: 3em;
-                color: #222;
-              }
-              h2 {
-                font-size: 1.5em;
-                color: #555;
-              }
-              p {
-                font-size: 1.2em;
-                color: #666;
-              }
-            </style>
-          </head>
-          <body>
-            <h2>🔐 Pairing Code</h2>
-            <h1>${code}</h1>
-            <p>Go to <strong>WhatsApp > Linked Devices > Link with code</strong></p>
-          </body>
-        </html>
-      `);
-    } else {
-      res.send('<h2>✅ Bot is already paired.</h2>');
+  // Connection update
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update
+    if (connection === 'close') {
+      const reason = new Boom(lastDisconnect?.error)?.output.statusCode
+      if (reason !== DisconnectReason.loggedOut) startSock()
+    } else if (connection === 'open') {
+      console.log('✅ Bot Connected!')
+      // Notify owner
+      await sock.sendMessage(OWNER, {
+        text: '✅ Ben Whittaker Bot is now connected and running!'
+      })
     }
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('<h2>❌ Error generating pairing code.</h2>');
-  }
-});
+  })
+}
 
-// Serve QR code image
-app.get('/qr', (req, res) => {
-  if (!qrImageData) return res.send('QR code not ready yet. Please refresh.');
-  const img = Buffer.from(qrImageData.split(',')[1], 'base64');
-  res.writeHead(200, {
-    'Content-Type': 'image/png',
-    'Content-Length': img.length,
-  });
-  res.end(img);
-});
-
-// Serve QR HTML page
-app.get('/pairing', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/pairing.html'));
-});
-
-app.listen(PORT, () => {
-  console.log(`🌐 Server running: http://localhost:${PORT}/paircode`);
-});
+startSock()
