@@ -17,12 +17,10 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Map kuhifadhi sessions za pairing
-// key: pairingCode, value: { sock, qrCode (base64), saveCreds, phoneNumber }
 const sessions = new Map();
 
 function generatePairCode() {
-  return Math.random().toString(36).substring(2, 10).toUpperCase();
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
 async function startWhatsAppSession(pairingCode, phoneNumber) {
@@ -38,7 +36,7 @@ async function startWhatsAppSession(pairingCode, phoneNumber) {
     browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
   });
 
-  sessions.set(pairingCode, { sock, qrCode: null, saveCreds, phoneNumber });
+  sessions.set(pairingCode, { sock, qrCode: null, saveCreds });
 
   sock.ev.on("connection.update", async (update) => {
     const { qr, connection, lastDisconnect } = update;
@@ -83,26 +81,12 @@ async function startWhatsAppSession(pairingCode, phoneNumber) {
 
     if (connection === "open") {
       console.log(`✅ WhatsApp connected for session ${pairingCode}`);
-
-      // Tuma session ID (pairingCode) kwa DM kwa user nambari
-      try {
-        if (phoneNumber) {
-          const jid = phoneNumber.replace("+", "") + "@s.whatsapp.net";
-          await sock.sendMessage(jid, {
-            text: `Session ID yako ni: ${pairingCode}`,
-          });
-          console.log(`📩 Sent session ID (${pairingCode}) to ${phoneNumber}`);
-        }
-      } catch (err) {
-        console.error("Error sending session ID DM:", err);
-      }
     }
   });
 
   sock.ev.on("creds.update", saveCreds);
 }
 
-// Endpoint kuanzisha session mpya
 app.post("/pairing", async (req, res) => {
   try {
     const { phoneNumber } = req.body;
@@ -124,7 +108,6 @@ app.post("/pairing", async (req, res) => {
   }
 });
 
-// Endpoint kurudisha QR code image base64 kwa pairingCode
 app.get("/qr", (req, res) => {
   const pairingCode = req.query.pairingCode;
   if (!pairingCode) {
@@ -138,24 +121,6 @@ app.get("/qr", (req, res) => {
     return res.status(404).json({ message: "QR code not generated yet" });
   }
   res.json({ qr: session.qrCode });
-});
-
-// Endpoint kuonyesha list ya sessions zinazoishi
-app.get("/sessions", (req, res) => {
-  const data = [];
-  sessions.forEach((value, key) => {
-    data.push({
-      pairingCode: key,
-      connected: value.sock?.ws?.readyState === 1,
-      phoneNumber: value.phoneNumber,
-    });
-  });
-  res.json(data);
-});
-
-// Serve simple index.html page if exists (optional)
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
 });
 
 app.listen(PORT, () => {
