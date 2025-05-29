@@ -133,7 +133,30 @@ app.get("/sessions", (req, res) => {
   res.json(list);
 });
 
-// Serve index.html page if exists
+// Endpoint: send message to WhatsApp number
+app.post("/send-message", async (req, res) => {
+  const { pairingCode, to, message } = req.body;
+
+  if (!pairingCode || !to || !message) {
+    return res.status(400).json({ success: false, message: "pairingCode, to, and message are required" });
+  }
+
+  const session = sessions.get(pairingCode);
+  if (!session || !session.sock) {
+    return res.status(404).json({ success: false, message: "Session not found or not connected" });
+  }
+
+  try {
+    const jid = to.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+    await session.sock.sendMessage(jid, { text: message });
+    res.json({ success: true, message: "Message sent successfully" });
+  } catch (error) {
+    console.error("Failed to send message:", error);
+    res.status(500).json({ success: false, message: "Failed to send message", error: error.message });
+  }
+});
+
+// Serve index.html if available
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
