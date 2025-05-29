@@ -1,11 +1,12 @@
 services:
   - type: web
-    name: ben-whittaker-bot
+    name: whatsapp-session-pairing-server
     env: node
     plan: free
     buildCommand: npm install
-    startCommand: npm start
-    autoDeploy: true
+    startCommand: node index.js
     envVars:
       - key: NODE_VERSION
-        value: 18.16.0
+        value: 18.20.2
+      - key: SESSION_FILE
+        value: ./session_data/creds.json
