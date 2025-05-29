@@ -21,7 +21,7 @@
     "fs-extra": "^11.2.0",
     "g-i-s": "^2.1.2",
     "google-it": "^1.6.1",
-    "image-to-base64": "^2.3.0",
+    "image-to-base64": "^2.1.0",
     "lodash": "^4.17.21",
     "moment": "^2.29.4",
     "mongoose": "^7.6.3",
