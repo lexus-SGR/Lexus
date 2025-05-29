@@ -1,166 +1,201 @@
-const express = require("express");
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-} = require("@whiskeysockets/baileys");
-const { Boom } = require("@hapi/boom");
-const QRCode = require("qrcode");
-const pino = require("pino");
-const fs = require("fs");
-const path = require("path");
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ben Whittaker WhatsApp Bot</title>
+  <style>
+    /* Fullscreen background image */
+    body, html {
+      height: 100%;
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: url('ommy.png') no-repeat center center fixed;
+      background-size: cover;
+      position: relative;
+      color: #333;
+      padding: 30px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
 
-const app = express();
-app.use(express.static(__dirname));
-app.use(express.json());
+    /* Overlay to slightly darken the background for readability */
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35);
+      z-index: 0;
+    }
 
-const PORT = process.env.PORT || 3000;
-const sessions = new Map();
+    /* Content container to be above overlay */
+    .content {
+      position: relative;
+      z-index: 1;
+      max-width: 600px;
+      margin: auto;
+      background: rgba(255,255,255,0.9);
+      padding: 20px 30px 30px 30px;
+      border-radius: 15px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
 
-function generatePairCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
+    /* SVG container for Ben Whittaker text */
+    .logo {
+      text-align: center;
+      margin-bottom: 30px;
+    }
 
-async function startWhatsAppSession(pairingCode, phoneNumber) {
-  const { state, saveCreds } = await useMultiFileAuthState(`auth_${pairingCode}`);
-  const { version } = await fetchLatestBaileysVersion();
+    svg text {
+      fill: #cc0000;
+      font-weight: 900;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 48px;
+      filter: drop-shadow(0 0 5px #ff4444);
+      animation: pulse 2.5s ease-in-out infinite;
+    }
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    logger: pino({ level: "silent" }),
-    printQRInTerminal: false,
-    browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
-  });
-
-  const session = { sock, qrCode: null, saveCreds, linkCode: null };
-  sessions.set(pairingCode, session);
-
-  sock.ev.on("connection.update", async (update) => {
-    const { qr, connection, lastDisconnect } = update;
-
-    if (qr) {
-      try {
-        const qrBase64 = await QRCode.toDataURL(qr);
-        session.qrCode = qrBase64;
-        sessions.set(pairingCode, session);
-        console.log(`🖼️ QR code generated for ${pairingCode}`);
-      } catch (err) {
-        console.error("Error generating QR code:", err);
+    @keyframes pulse {
+      0%, 100% {
+        fill-opacity: 1;
+        filter: drop-shadow(0 0 5px #ff4444);
+        transform: scale(1);
+      }
+      50% {
+        fill-opacity: 0.7;
+        filter: drop-shadow(0 0 15px #ff0000);
+        transform: scale(1.05);
       }
     }
 
-    if (connection === "close") {
-      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      if (code !== DisconnectReason.loggedOut) {
-        console.log(`🔄 Reconnecting session ${pairingCode}...`);
-        try {
-          await startWhatsAppSession(pairingCode, phoneNumber);
-        } catch (e) {
-          console.error("Error reconnecting:", e);
-        }
+    h2 {
+      color: #333;
+      margin-top: 0;
+    }
+    form {
+      margin-bottom: 20px;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+    }
+    input, button {
+      padding: 10px;
+      margin: 5px 0;
+      width: 100%;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+      border-radius: 5px;
+      transition: background-color 0.3s ease;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    #qr {
+      margin-top: 20px;
+      max-width: 300px;
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .info {
+      background: #e7f3ff;
+      padding: 10px;
+      border-left: 4px solid #2196F3;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="logo">
+      <svg width="320" height="70" viewBox="0 0 320 70" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Ben Whittaker">
+        <text x="10" y="50">Ben Whittaker</text>
+      </svg>
+    </div>
+
+    <h2>🔌 Create WhatsApp Session</h2>
+    <form id="session-form">
+      <label>Enter your WhatsApp number (e.g. +255712345678):</label>
+      <input type="text" id="phone" required />
+      <button type="submit">Generate QR & Start Session</button>
+    </form>
+
+    <div class="info" id="session-info" style="display:none;">
+      <p><strong>Pairing Code:</strong> <span id="pairing-code"></span></p>
+      <p><strong>Link Code:</strong> <span id="link-code"></span></p>
+      <img id="qr" src="" alt="QR Code" />
+    </div>
+
+    <h2>📨 Send Message via WhatsApp</h2>
+    <form id="send-form">
+      <label>Pairing Code:</label>
+      <input type="text" id="pair-code" required />
+      <label>Recipient Number (e.g. +255712345678):</label>
+      <input type="text" id="to" required />
+      <label>Your Message:</label>
+      <input type="text" id="message" required />
+      <button type="submit">Send Message</button>
+    </form>
+  </div>
+
+  <script>
+    const sessionForm = document.getElementById("session-form");
+    const sendForm = document.getElementById("send-form");
+    const qrImg = document.getElementById("qr");
+    const sessionInfo = document.getElementById("session-info");
+    const pairingCodeSpan = document.getElementById("pairing-code");
+    const linkCodeSpan = document.getElementById("link-code");
+
+    sessionForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const phone = document.getElementById("phone").value;
+
+      const res = await fetch("/pairing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneNumber: phone }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        pairingCodeSpan.textContent = data.pairingCode;
+        linkCodeSpan.textContent = data.linkCode || "Not available";
+        sessionInfo.style.display = "block";
+
+        const qrRes = await fetch(`/qr?pairingCode=${data.pairingCode}`);
+        const qrData = await qrRes.json();
+        qrImg.src = qrData.qr;
       } else {
-        console.log(`❌ Session ${pairingCode} logged out.`);
-        sessions.delete(pairingCode);
-        const authPath = path.join(__dirname, `auth_${pairingCode}`);
-        if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
+        alert("Failed to start session: " + data.message);
       }
-    }
-
-    if (connection === "open") {
-      console.log(`✅ WhatsApp connected for session ${pairingCode}`);
-    }
-  });
-
-  sock.ev.on("creds.update", saveCreds);
-
-  try {
-    const code = await sock.requestPairingCode(phoneNumber);
-    session.linkCode = code;
-    console.log(`🔐 Pairing code sent to WhatsApp: ${code}`);
-  } catch (err) {
-    console.warn("⚠️ Pairing code not supported or failed:", err.message);
-  }
-}
-
-// Endpoint: create session and send QR/pairing code
-app.post("/pairing", async (req, res) => {
-  const { phoneNumber } = req.body;
-
-  if (!phoneNumber || !phoneNumber.startsWith("+")) {
-    return res.status(400).json({ message: "Phone number must start with + (e.g. +255...)" });
-  }
-
-  const pairingCode = generatePairCode();
-  try {
-    await startWhatsAppSession(pairingCode, phoneNumber);
-    const session = sessions.get(pairingCode);
-    res.json({
-      success: true,
-      pairingCode,
-      phoneNumber,
-      linkCode: session.linkCode || null,
-      message: "Session created. Use QR or pairing code to link your device.",
     });
-  } catch (error) {
-    console.error("Error starting session:", error);
-    res.status(500).json({ message: "Failed to start WhatsApp session" });
-  }
-});
 
-// Endpoint: fetch QR image in base64
-app.get("/qr", (req, res) => {
-  const pairingCode = req.query.pairingCode;
-  if (!pairingCode) return res.status(400).json({ message: "pairingCode required" });
+    sendForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const pairingCode = document.getElementById("pair-code").value;
+      const to = document.getElementById("to").value;
+      const message = document.getElementById("message").value;
 
-  const session = sessions.get(pairingCode);
-  if (!session || !session.qrCode) {
-    return res.status(404).json({ message: "QR not available yet" });
-  }
-  res.json({ qr: session.qrCode });
-});
+      const res = await fetch("/send-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairingCode, to, message }),
+      });
 
-// Endpoint: list all active sessions
-app.get("/sessions", (req, res) => {
-  const list = [];
-  sessions.forEach((s, code) => {
-    list.push({
-      pairingCode: code,
-      connected: s.sock?.ws?.readyState === 1,
+      const data = await res.json();
+      if (data.success) {
+        alert("✅ Message sent!");
+      } else {
+        alert("❌ Failed: " + data.message);
+      }
     });
-  });
-  res.json(list);
-});
-
-// Endpoint: send message to WhatsApp number
-app.post("/send-message", async (req, res) => {
-  const { pairingCode, to, message } = req.body;
-
-  if (!pairingCode || !to || !message) {
-    return res.status(400).json({ success: false, message: "pairingCode, to, and message are required" });
-  }
-
-  const session = sessions.get(pairingCode);
-  if (!session || !session.sock) {
-    return res.status(404).json({ success: false, message: "Session not found or not connected" });
-  }
-
-  try {
-    const jid = to.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
-    await session.sock.sendMessage(jid, { text: message });
-    res.json({ success: true, message: "Message sent successfully" });
-  } catch (error) {
-    console.error("Failed to send message:", error);
-    res.status(500).json({ success: false, message: "Failed to send message", error: error.message });
-  }
-});
-
-// Serve index.html if available
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running: http://localhost:${PORT}`);
-});
+  </script>
+</body>
+</html>
