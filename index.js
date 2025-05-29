@@ -49,7 +49,7 @@ async function startBot() {
     version,
     auth: state,
     logger: pino({ level: "silent" }),
-    printQRInTerminal: true,
+    printQRInTerminal: false,
     browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
   });
 
