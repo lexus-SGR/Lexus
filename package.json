@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@openai/openai": "^4.24.0",
+    "openai": "^4.33.1",
     "@whiskeysockets/baileys": "^6.7.16",
     "axios": "^1.6.7",
     "chalk": "^5.3.0",
