@@ -16,6 +16,7 @@
       justify-content: center;
       align-items: center;
       background: linear-gradient(135deg, #006400 0%, #004d00 100%);
+      flex-direction: column;
     }
     .background {
       background: rgba(0, 0, 0, 0.6);
@@ -24,6 +25,7 @@
       width: 350px;
       box-shadow: 0 0 20px #00ff00aa;
       text-align: center;
+      margin-bottom: 20px;
     }
     h1 {
       margin-bottom: 0.1em;
@@ -86,6 +88,13 @@
       border-radius: 10px;
       box-shadow: 0 0 15px #00ff00;
     }
+    #profilePic {
+      border-radius: 50%;
+      width: 120px;
+      height: 120px;
+      margin-bottom: 20px;
+      box-shadow: 0 0 20px #00ff00;
+    }
     footer.footer {
       margin-top: 30px;
       font-size: 0.9em;
@@ -101,6 +110,7 @@
   </style>
 </head>
 <body>
+  <img id="profilePic" src="ommy.png" alt="Ommy Profile Picture" />
   <div class="background">
     <h1>Ben Whittaker Tech</h1>
     <p class="subtitle">🟢 WhatsApp Session QR + Pairing Code Generator</p>
@@ -139,7 +149,7 @@
         const res = await fetch('/pairing', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ phone })
+          body: JSON.stringify({ phoneNumber: phone })
         });
         const data = await res.json();
         if(data.success){
@@ -167,7 +177,7 @@
       try {
         const res = await fetch(`/qr?pairingCode=${encodeURIComponent(currentPairingCode)}`);
         const data = await res.json();
-        if(data.qr){
+        if(data.success && data.qr){
           document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
           document.getElementById('output').textContent = "Scan the QR code with your WhatsApp to start the session.";
         } else {
