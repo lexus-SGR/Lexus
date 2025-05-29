@@ -1,94 +1,136 @@
-const express = require('express');
-const { makeWASocket, useSingleFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const { existsSync, mkdirSync } = require('fs');
-const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
-const dotenv = require('dotenv');
-const axios = require('axios');
-const chalk = require('chalk');
-const Boom = require('@hapi/boom');
-
-dotenv.config();
+const express = require("express");
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+} = require("@whiskeysockets/baileys");
+const { Boom } = require("@hapi/boom");
+const fs = require("fs");
+const pino = require("pino");
+const path = require("path");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static('public')); // Serve static files like index.html
-
-const SESSIONS_DIR = './sessions';
-if (!existsSync(SESSIONS_DIR)) mkdirSync(SESSIONS_DIR);
-
-const pairingMap = new Map(); // pairingCode => { phone, socket, qr }
-
-app.post('/pairing', (req, res) => {
-  const { phone } = req.body;
-  if (!phone) return res.json({ success: false, message: 'Please provide your WhatsApp number.' });
-
-  const pairingCode = uuidv4().slice(0, 8);
-  pairingMap.set(pairingCode, { phone, socket: null, qr: null });
-
-  res.json({ success: true, pairingCode });
-});
-
-app.get('/qr', async (req, res) => {
-  const pairingCode = req.query.pairingCode;
-  if (!pairingCode || !pairingMap.has(pairingCode)) {
-    return res.json({ success: false, message: 'Invalid or missing pairing code.' });
-  }
-
-  let sessionData = pairingMap.get(pairingCode);
-
-  if (sessionData.socket) {
-    if (sessionData.qr) {
-      return res.json({ success: true, qr: sessionData.qr });
-    }
-  } else {
-    const { state, saveState } = useSingleFileAuthState(`${SESSIONS_DIR}/${pairingCode}.json`);
-    const sock = makeWASocket({
-      printQRInTerminal: false,
-      auth: state,
-    });
-
-    sock.ev.on('connection.update', (update) => {
-      const { qr, connection, lastDisconnect } = update;
-
-      if (qr) {
-        // Convert QR string to data URI image for frontend
-        const qrDataUri = `data:image/png;base64,${Buffer.from(qr).toString('base64')}`;
-        sessionData.qr = qrDataUri;
-        pairingMap.set(pairingCode, sessionData);
-      }
-
-      if (connection === 'open') {
-        console.log(chalk.green(`Session created for pairingCode ${pairingCode}, phone: ${sessionData.phone}`));
-        sessionData.socket = sock;
-        sessionData.qr = null;
-        pairingMap.set(pairingCode, sessionData);
-      }
-
-      if (connection === 'close') {
-        const status = (lastDisconnect?.error)?.output?.statusCode;
-        if (status === DisconnectReason.loggedOut) {
-          console.log(chalk.red(`Session logged out for pairingCode ${pairingCode}`));
-          pairingMap.delete(pairingCode);
-        }
-      }
-    });
-
-    sock.ev.on('creds.update', saveState);
-
-    sessionData.socket = sock;
-    pairingMap.set(pairingCode, sessionData);
-  }
-
-  if (sessionData.qr) {
-    res.json({ success: true, qr: sessionData.qr });
-  } else {
-    res.json({ success: false, message: 'QR code is not available at the moment, please try again shortly.' });
-  }
-});
+app.use(express.static(__dirname));
+app.use(express.json()); // ili kusoma body za JSON
 
 const PORT = process.env.PORT || 3000;
+
+let pairCode = '';
+let qrCode = '';
+let sock = null;
+
+async function startBot() {
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState("auth");
+
+    const { version } = await fetchLatestBaileysVersion();
+
+    sock = makeWASocket({
+      version,
+      auth: state,
+      logger: pino({ level: "silent" }),
+      printQRInTerminal: true,
+      browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr, pairingCode } = update;
+
+      if (qr) {
+        qrCode = qr;
+        console.log("🖼️ QR code updated.");
+      }
+
+      if (pairingCode) {
+        pairCode = pairingCode;
+        // Andika pairing code kwenye file kwa persistence
+        fs.writeFileSync(path.join(__dirname, "paircode.txt"), pairCode);
+        console.log("📲 Pairing Code: ", pairCode);
+      }
+
+      if (connection === "close") {
+        const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        if (statusCode !== DisconnectReason.loggedOut) {
+          console.log("🔄 Reconnecting...");
+          await startBot();
+        } else {
+          console.log("❌ Logged out from WhatsApp.");
+          sock = null; // Clear socket on logout
+          pairCode = '';
+          qrCode = '';
+          // Optionally, delete auth folder if you want to force re-auth
+        }
+      }
+
+      if (connection === "open") {
+        console.log("✅ Bot Connected to WhatsApp!");
+      }
+    });
+
+  } catch (err) {
+    console.error("Error in startBot:", err);
+  }
+}
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+// Return raw QR code string
+app.get("/qr", (req, res) => {
+  if (qrCode) {
+    res.send(qrCode);
+  } else {
+    res.status(404).send("QR code not yet generated.");
+  }
+});
+
+// Return current pairing code string
+app.get("/pair", (req, res) => {
+  if (pairCode) {
+    res.send(pairCode);
+  } else {
+    res.status(404).send("Pairing code not yet generated.");
+  }
+});
+
+// POST endpoint to request pairing code for a phone number
+app.post("/request-pairing", async (req, res) => {
+  try {
+    const phoneNumber = req.body.phoneNumber;
+    if (!phoneNumber) {
+      return res.status(400).json({ message: "Phone number is required" });
+    }
+    const jid = `${phoneNumber}@s.whatsapp.net`;
+
+    if (!sock) {
+      return res.status(500).json({ message: "WhatsApp socket not initialized yet" });
+    }
+
+    // NOTE: bailey sio na method requestPairingCode rasmi, badilisha kwa logic yako
+    // Kama unataka kuanzisha pairing, basi anza session mpya au tumia njia ya kuanzisha QR
+    // Hii hapa ni mfano tu, unaweza kuondoa kama haifanyi kazi
+    if (sock.ev) {
+      // Hii sio API rasmi, inawezekana haifanyi kazi
+      try {
+        await sock.requestPairingCode(jid);
+        return res.json({ message: `Pairing code requested for ${phoneNumber}` });
+      } catch (e) {
+        return res.status(500).json({ message: "Failed to request pairing code", error: e.message });
+      }
+    } else {
+      return res.status(500).json({ message: "Sock.ev not available" });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to request pairing code", error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(chalk.blue(`Server running on port ${PORT}`));
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
+  startBot();
 });
