@@ -13,12 +13,17 @@
         <h1>Ben Whittaker Tech</h1>
         <p class="subtitle">🟢 WhatsApp Session QR + Pairing Code Generator</p>
 
-        <div class="buttons">
-          <button onclick="getQRCode()">📷 Get QR Code</button>
-          <button onclick="getPairingCode()">🔗 Get Pairing Code</button>
-        </div>
+        <label for="phoneInput">Enter your WhatsApp number (with country code):</label><br/>
+        <input type="text" id="phoneInput" placeholder="+1234567890" style="width: 200px; padding:5px;" /><br/><br/>
 
-        <pre id="output">Click a button to generate a code...</pre>
+        <button onclick="requestPairingCode()">🔗 Get Pairing Code</button>
+        <button onclick="getQRCode()" disabled id="qrBtn">📷 Show QR Code</button>
+
+        <pre id="output" style="white-space: pre-wrap; background:#eee; padding:10px; margin-top:20px;">
+          Enter your number and click "Get Pairing Code"
+        </pre>
+
+        <div id="qrCodeContainer" style="margin-top: 20px;"></div>
       </div>
     </div>
   </div>
@@ -32,16 +37,43 @@
   </footer>
 
   <script>
-    async function getQRCode() {
-      const res = await fetch("/qr");
-      const data = await res.text();
-      document.getElementById("output").textContent = data;
+    let currentPairingCode = null;
+
+    async function requestPairingCode() {
+      const phone = document.getElementById('phoneInput').value.trim();
+      if(!phone) {
+        alert('Please enter your WhatsApp number!');
+        return;
+      }
+      const res = await fetch('/pairing', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ phone })
+      });
+      const data = await res.json();
+      if(data.success){
+        currentPairingCode = data.pairingCode;
+        document.getElementById('output').textContent = `Your Pairing Code is:\n\n${currentPairingCode}\n\nClick "Show QR Code" to continue.`;
+        document.getElementById('qrBtn').disabled = false;
+        document.getElementById('qrCodeContainer').innerHTML = '';
+      } else {
+        document.getElementById('output').textContent = `Error: ${data.message}`;
+      }
     }
 
-    async function getPairingCode() {
-      const res = await fetch("/pair");
+    async function getQRCode() {
+      if(!currentPairingCode){
+        alert('Please get a pairing code first!');
+        return;
+      }
+      const res = await fetch(`/qr?pairingCode=${encodeURIComponent(currentPairingCode)}`);
       const data = await res.json();
-      document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+      if(data.qr){
+        document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
+        document.getElementById('output').textContent = "Scan the QR code with your WhatsApp to start the session.";
+      } else {
+        document.getElementById('output').textContent = data.message || "QR code is not available.";
+      }
     }
   </script>
 </body>
