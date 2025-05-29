@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ben Whittaker Tech</title>
+  <link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+  <div class="background">
+    <div class="overlay">
+      <div class="content">
+        <h1>Ben Whittaker Tech</h1>
+        <p class="subtitle">🟢 WhatsApp Session QR + Pairing Code Generator</p>
+
+        <div class="buttons">
+          <button onclick="getQRCode()">📷 Get QR Code</button>
+          <button onclick="getPairingCode()">🔗 Get Pairing Code</button>
+        </div>
+
+        <pre id="output">Click a button to generate a code...</pre>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p>🔗 <a href="https://github.com/lexus-SGR/Lexus.git" target="_blank">GitHub Repo</a></p>
+    <p>📞 Contact: <a href="mailto:benwhittakertech@gmail.com">benwhittakertech@gmail.com</a></p>
+    <p>📣 WhatsApp Channel: 
+      <a href="https://whatsapp.com/channel/0029Vb6JhPyBKfhv6j6msk3t" target="_blank">Join Now 🔥</a>
+    </p>
+  </footer>
+
+  <script>
+    async function getQRCode() {
+      const res = await fetch("/qr");
+      const data = await res.text();
+      document.getElementById("output").textContent = data;
+    }
+
+    async function getPairingCode() {
+      const res = await fetch("/pair");
+      const data = await res.json();
+      document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+    }
+  </script>
+</body>
+</html>
