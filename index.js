@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const sessions = new Map();
 
 function generatePairCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
 async function startWhatsAppSession(pairingCode, phoneNumber) {
