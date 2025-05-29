@@ -1,194 +1,166 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ben Whittaker Tech</title>
-  <link rel="stylesheet" href="/style.css" />
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #222;
-      color: #eee;
-      margin: 0; padding: 0;
-      height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      background: linear-gradient(135deg, #006400 0%, #004d00 100%);
-      flex-direction: column;
-    }
-    .background {
-      background: rgba(0, 0, 0, 0.6);
-      border-radius: 12px;
-      padding: 30px;
-      width: 350px;
-      box-shadow: 0 0 20px #00ff00aa;
-      text-align: center;
-      margin-bottom: 20px;
-    }
-    h1 {
-      margin-bottom: 0.1em;
-      font-size: 2em;
-      color: #00ff00;
-    }
-    .subtitle {
-      font-size: 1.1em;
-      margin-bottom: 20px;
-      color: #aaffaa;
-    }
-    label {
-      font-weight: bold;
-      display: block;
-      margin-bottom: 6px;
-      text-align: left;
-    }
-    input[type="text"] {
-      width: 100%;
-      padding: 8px 10px;
-      border-radius: 6px;
-      border: none;
-      margin-bottom: 15px;
-      font-size: 1em;
-    }
-    button {
-      cursor: pointer;
-      padding: 10px 18px;
-      margin: 5px;
-      border-radius: 6px;
-      border: none;
-      background-color: #00aa00;
-      color: white;
-      font-weight: bold;
-      font-size: 1em;
-      transition: background-color 0.3s ease;
-    }
-    button:disabled {
-      background-color: #555;
-      cursor: not-allowed;
-    }
-    button:hover:not(:disabled) {
-      background-color: #009900;
-    }
-    pre#output {
-      background: #003300;
-      padding: 15px;
-      margin-top: 20px;
-      border-radius: 8px;
-      text-align: left;
-      white-space: pre-wrap;
-      font-family: monospace;
-      min-height: 90px;
-      color: #b3ffb3;
-    }
-    #qrCodeContainer img {
-      margin-top: 20px;
-      width: 250px;
-      height: 250px;
-      border-radius: 10px;
-      box-shadow: 0 0 15px #00ff00;
-    }
-    #profilePic {
-      border-radius: 50%;
-      width: 120px;
-      height: 120px;
-      margin-bottom: 20px;
-      box-shadow: 0 0 20px #00ff00;
-    }
-    footer.footer {
-      margin-top: 30px;
-      font-size: 0.9em;
-      color: #aaffaa;
-    }
-    footer.footer a {
-      color: #00ff00;
-      text-decoration: none;
-    }
-    footer.footer a:hover {
-      text-decoration: underline;
-    }
-  </style>
-</head>
-<body>
-  <img id="profilePic" src="ommy.png" alt="Ommy Profile Picture" />
-  <div class="background">
-    <h1>Ben Whittaker Tech</h1>
-    <p class="subtitle">🟢 WhatsApp Session QR + Pairing Code Generator</p>
+const express = require("express");
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+} = require("@whiskeysockets/baileys");
+const { Boom } = require("@hapi/boom");
+const QRCode = require("qrcode");
+const pino = require("pino");
+const fs = require("fs");
+const path = require("path");
 
-    <label for="phoneInput">Enter your WhatsApp number (with country code):</label>
-    <input type="text" id="phoneInput" placeholder="+1234567890" autocomplete="off" />
+const app = express();
+app.use(express.static(__dirname));
+app.use(express.json());
 
-    <div>
-      <button onclick="requestPairingCode()">🔗 Get Pairing Code</button>
-      <button onclick="getQRCode()" disabled id="qrBtn">📷 Show QR Code</button>
-    </div>
+const PORT = process.env.PORT || 3000;
+const sessions = new Map();
 
-    <pre id="output">Enter your number and click "Get Pairing Code"</pre>
+function generatePairCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
 
-    <div id="qrCodeContainer"></div>
+async function startWhatsAppSession(pairingCode, phoneNumber) {
+  const { state, saveCreds } = await useMultiFileAuthState(`auth_${pairingCode}`);
+  const { version } = await fetchLatestBaileysVersion();
 
-    <footer class="footer">
-      <p>🔗 <a href="https://github.com/lexus-SGR/Lexus.git" target="_blank" rel="noopener noreferrer">GitHub Repo</a></p>
-      <p>📞 Contact: <a href="mailto:benwhittakertech@gmail.com">benwhittakertech@gmail.com</a></p>
-      <p>📣 WhatsApp Channel: 
-        <a href="https://whatsapp.com/channel/0029Vb6JhPyBKfhv6j6msk3t" target="_blank" rel="noopener noreferrer">Join Now 🔥</a>
-      </p>
-    </footer>
-  </div>
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+    browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
+  });
 
-  <script>
-    let currentPairingCode = null;
+  const session = { sock, qrCode: null, saveCreds, linkCode: null };
+  sessions.set(pairingCode, session);
 
-    async function requestPairingCode() {
-      const phone = document.getElementById('phoneInput').value.trim();
-      if(!phone) {
-        alert('Please enter your WhatsApp number!');
-        return;
-      }
+  sock.ev.on("connection.update", async (update) => {
+    const { qr, connection, lastDisconnect } = update;
+
+    if (qr) {
       try {
-        const res = await fetch('/pairing', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ phoneNumber: phone })
-        });
-        const data = await res.json();
-        if(data.success){
-          currentPairingCode = data.pairingCode;
-          document.getElementById('output').textContent = `Your Pairing Code is:\n\n${currentPairingCode}\n\nClick "Show QR Code" to continue.`;
-          document.getElementById('qrBtn').disabled = false;
-          document.getElementById('qrCodeContainer').innerHTML = '';
-        } else {
-          document.getElementById('output').textContent = `Error: ${data.message || "Failed to get pairing code."}`;
-          document.getElementById('qrBtn').disabled = true;
-          currentPairingCode = null;
-          document.getElementById('qrCodeContainer').innerHTML = '';
-        }
+        const qrBase64 = await QRCode.toDataURL(qr);
+        session.qrCode = qrBase64;
+        sessions.set(pairingCode, session);
+        console.log(`🖼️ QR code generated for ${pairingCode}`);
       } catch (err) {
-        document.getElementById('output').textContent = 'Network error. Please try again later.';
-        console.error(err);
+        console.error("Error generating QR code:", err);
       }
     }
 
-    async function getQRCode() {
-      if(!currentPairingCode){
-        alert('Please get a pairing code first!');
-        return;
-      }
-      try {
-        const res = await fetch(`/qr?pairingCode=${encodeURIComponent(currentPairingCode)}`);
-        const data = await res.json();
-        if(data.success && data.qr){
-          document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
-          document.getElementById('output').textContent = "Scan the QR code with your WhatsApp to start the session.";
-        } else {
-          document.getElementById('output').textContent = data.message || "QR code is not available.";
-          document.getElementById('qrCodeContainer').innerHTML = '';
+    if (connection === "close") {
+      const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      if (code !== DisconnectReason.loggedOut) {
+        console.log(`🔄 Reconnecting session ${pairingCode}...`);
+        try {
+          await startWhatsAppSession(pairingCode, phoneNumber);
+        } catch (e) {
+          console.error("Error reconnecting:", e);
         }
-      } catch (err) {
-        document.getElementById('output').textContent = 'Failed to load QR code. Try again later.';
-        console.error(err);
+      } else {
+        console.log(`❌ Session ${pairingCode} logged out.`);
+        sessions.delete(pairingCode);
+        const authPath = path.join(__dirname, `auth_${pairingCode}`);
+        if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
       }
     }
-  </script>
-</body>
-</html>
+
+    if (connection === "open") {
+      console.log(`✅ WhatsApp connected for session ${pairingCode}`);
+    }
+  });
+
+  sock.ev.on("creds.update", saveCreds);
+
+  try {
+    const code = await sock.requestPairingCode(phoneNumber);
+    session.linkCode = code;
+    console.log(`🔐 Pairing code sent to WhatsApp: ${code}`);
+  } catch (err) {
+    console.warn("⚠️ Pairing code not supported or failed:", err.message);
+  }
+}
+
+// Endpoint: create session and send QR/pairing code
+app.post("/pairing", async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  if (!phoneNumber || !phoneNumber.startsWith("+")) {
+    return res.status(400).json({ message: "Phone number must start with + (e.g. +255...)" });
+  }
+
+  const pairingCode = generatePairCode();
+  try {
+    await startWhatsAppSession(pairingCode, phoneNumber);
+    const session = sessions.get(pairingCode);
+    res.json({
+      success: true,
+      pairingCode,
+      phoneNumber,
+      linkCode: session.linkCode || null,
+      message: "Session created. Use QR or pairing code to link your device.",
+    });
+  } catch (error) {
+    console.error("Error starting session:", error);
+    res.status(500).json({ message: "Failed to start WhatsApp session" });
+  }
+});
+
+// Endpoint: fetch QR image in base64
+app.get("/qr", (req, res) => {
+  const pairingCode = req.query.pairingCode;
+  if (!pairingCode) return res.status(400).json({ message: "pairingCode required" });
+
+  const session = sessions.get(pairingCode);
+  if (!session || !session.qrCode) {
+    return res.status(404).json({ message: "QR not available yet" });
+  }
+  res.json({ qr: session.qrCode });
+});
+
+// Endpoint: list all active sessions
+app.get("/sessions", (req, res) => {
+  const list = [];
+  sessions.forEach((s, code) => {
+    list.push({
+      pairingCode: code,
+      connected: s.sock?.ws?.readyState === 1,
+    });
+  });
+  res.json(list);
+});
+
+// Endpoint: send message to WhatsApp number
+app.post("/send-message", async (req, res) => {
+  const { pairingCode, to, message } = req.body;
+
+  if (!pairingCode || !to || !message) {
+    return res.status(400).json({ success: false, message: "pairingCode, to, and message are required" });
+  }
+
+  const session = sessions.get(pairingCode);
+  if (!session || !session.sock) {
+    return res.status(404).json({ success: false, message: "Session not found or not connected" });
+  }
+
+  try {
+    const jid = to.replace(/[^0-9]/g, "") + "@s.whatsapp.net";
+    await session.sock.sendMessage(jid, { text: message });
+    res.json({ success: true, message: "Message sent successfully" });
+  } catch (error) {
+    console.error("Failed to send message:", error);
+    res.status(500).json({ success: false, message: "Failed to send message", error: error.message });
+  }
+});
+
+// Serve index.html if available
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running: http://localhost:${PORT}`);
+});
