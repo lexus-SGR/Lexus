@@ -1,95 +1,88 @@
-const express = require("express");
-const path = require("path");
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-} = require("@whiskeysockets/baileys");
-const { Boom } = require("@hapi/boom");
-const fs = require("fs");
-const pino = require("pino");
+import express from 'express';
+import { makeWASocket, useSingleFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import { existsSync, mkdirSync } from 'fs';
+import cors from 'cors';
+import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public')); // Serve static files like index.html
 
-let pairCode = "";
-let qrCode = "";
+const SESSIONS_DIR = './sessions';
+if(!existsSync(SESSIONS_DIR)) mkdirSync(SESSIONS_DIR);
 
-app.use(express.static(path.join(__dirname))); // serve static files like style.css and index.html
+const pairingMap = new Map(); // pairingCode => { phone, socket, qr }
 
-// Serve your index.html on root
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+app.post('/pairing', (req, res) => {
+  const { phone } = req.body;
+  if(!phone) return res.json({ success: false, message: 'Please provide your WhatsApp number.' });
+
+  const pairingCode = uuidv4().slice(0, 8);
+  pairingMap.set(pairingCode, { phone, socket: null, qr: null });
+
+  res.json({ success: true, pairingCode });
 });
 
-// Endpoint to get QR code string (for display or debugging)
-app.get("/qr", (req, res) => {
-  if (qrCode) {
-    res.send(qrCode);
-  } else {
-    res.send("QR code not yet generated.");
+app.get('/qr', async (req, res) => {
+  const pairingCode = req.query.pairingCode;
+  if(!pairingCode || !pairingMap.has(pairingCode)) {
+    return res.json({ success: false, message: 'Invalid or missing pairing code.' });
   }
-});
 
-// Endpoint to get pairing code as JSON
-app.get("/pair", (req, res) => {
-  if (pairCode) {
-    res.json({ pairingCode: pairCode });
+  let sessionData = pairingMap.get(pairingCode);
+
+  if(sessionData.socket) {
+    if(sessionData.qr) {
+      return res.json({ success: true, qr: sessionData.qr });
+    }
   } else {
-    res.json({ message: "Pairing code not yet generated." });
-  }
-});
+    const { state, saveState } = useSingleFileAuthState(`${SESSIONS_DIR}/${pairingCode}.json`);
+    const sock = makeWASocket({
+      printQRInTerminal: false,
+      auth: state,
+    });
 
-async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth");
-  const { version } = await fetchLatestBaileysVersion();
+    sock.ev.on('connection.update', (update) => {
+      const { qr, connection, lastDisconnect } = update;
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    logger: pino({ level: "silent" }),
-    printQRInTerminal: false,
-    browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
-  });
-
-  sock.ev.on("creds.update", saveCreds);
-
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr, pairingCode: pCode } = update;
-
-    if (qr) {
-      qrCode = qr;
-      console.log("📷 QR Code updated");
-    }
-
-    if (pCode) {
-      pairCode = pCode;
-      fs.writeFileSync("./paircode.txt", pairCode);
-      console.log("🔗 Pairing Code:", pairCode);
-    }
-
-    if (connection === "close") {
-      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      if (reason !== DisconnectReason.loggedOut) {
-        console.log("🔄 Reconnecting...");
-        startBot();
-      } else {
-        console.log("❌ Logged out from WhatsApp.");
+      if(qr){
+        // Convert QR string to data URI image for frontend
+        const qrDataUri = `data:image/png;base64,${Buffer.from(qr).toString('base64')}`;
+        sessionData.qr = qrDataUri;
+        pairingMap.set(pairingCode, sessionData);
       }
-    }
 
-    if (connection === "open") {
-      console.log("✅ Bot Connected to WhatsApp!");
-    }
-  });
+      if(connection === 'open') {
+        console.log(`Session created for pairingCode ${pairingCode}, phone: ${sessionData.phone}`);
+        sessionData.socket = sock;
+        sessionData.qr = null;
+        pairingMap.set(pairingCode, sessionData);
+      }
 
-  if (!fs.existsSync("./auth/creds.json")) {
-    await sock.requestPairingCode("255760317060@s.whatsapp.net"); // Badilisha na namba yako halisi
+      if(connection === 'close') {
+        const status = (lastDisconnect?.error)?.output?.statusCode;
+        if(status === DisconnectReason.loggedOut){
+          console.log(`Session logged out for pairingCode ${pairingCode}`);
+          pairingMap.delete(pairingCode);
+        }
+      }
+    });
+
+    sock.ev.on('creds.update', saveState);
+
+    sessionData.socket = sock;
+    pairingMap.set(pairingCode, sessionData);
   }
-}
 
+  if(sessionData.qr){
+    res.json({ success: true, qr: sessionData.qr });
+  } else {
+    res.json({ success: false, message: 'QR code is not available at the moment, please try again shortly.' });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
-  startBot();
+  console.log(`Server running on port ${PORT}`);
 });
