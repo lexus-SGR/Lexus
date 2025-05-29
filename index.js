@@ -18,11 +18,11 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // Map kuhifadhi sessions za pairing
-// key: pairingCode, value: { sock, qrCode (base64), saveCreds }
+// key: pairingCode, value: { sock, qrCode (base64), saveCreds, phoneNumber }
 const sessions = new Map();
 
 function generatePairCode() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
 async function startWhatsAppSession(pairingCode, phoneNumber) {
@@ -38,7 +38,7 @@ async function startWhatsAppSession(pairingCode, phoneNumber) {
     browser: ["Ben Whittaker Bot", "Chrome", "1.0.0"],
   });
 
-  sessions.set(pairingCode, { sock, qrCode: null, saveCreds });
+  sessions.set(pairingCode, { sock, qrCode: null, saveCreds, phoneNumber });
 
   sock.ev.on("connection.update", async (update) => {
     const { qr, connection, lastDisconnect } = update;
@@ -61,7 +61,6 @@ async function startWhatsAppSession(pairingCode, phoneNumber) {
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
       if (statusCode !== DisconnectReason.loggedOut) {
         console.log(`🔄 Reconnecting session ${pairingCode}...`);
-        // Reconnect logic simple: restart session
         try {
           await startWhatsAppSession(pairingCode, phoneNumber);
         } catch (e) {
@@ -70,7 +69,6 @@ async function startWhatsAppSession(pairingCode, phoneNumber) {
       } else {
         console.log(`❌ Session ${pairingCode} logged out and removed.`);
         sessions.delete(pairingCode);
-        // Optionally delete auth folder:
         try {
           const authPath = path.join(__dirname, `auth_${pairingCode}`);
           if (fs.existsSync(authPath)) {
@@ -85,6 +83,19 @@ async function startWhatsAppSession(pairingCode, phoneNumber) {
 
     if (connection === "open") {
       console.log(`✅ WhatsApp connected for session ${pairingCode}`);
+
+      // Tuma session ID (pairingCode) kwa DM kwa user nambari
+      try {
+        if (phoneNumber) {
+          const jid = phoneNumber.replace("+", "") + "@s.whatsapp.net";
+          await sock.sendMessage(jid, {
+            text: `Session ID yako ni: ${pairingCode}`,
+          });
+          console.log(`📩 Sent session ID (${pairingCode}) to ${phoneNumber}`);
+        }
+      } catch (err) {
+        console.error("Error sending session ID DM:", err);
+      }
     }
   });
 
@@ -136,6 +147,7 @@ app.get("/sessions", (req, res) => {
     data.push({
       pairingCode: key,
       connected: value.sock?.ws?.readyState === 1,
+      phoneNumber: value.phoneNumber,
     });
   });
   res.json(data);
