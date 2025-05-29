@@ -2,39 +2,129 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ben Whittaker Tech</title>
-  <link rel="stylesheet" href="/style.css"/>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #222;
+      color: #eee;
+      margin: 0; padding: 0;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: linear-gradient(135deg, #006400 0%, #004d00 100%);
+    }
+    .background {
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 12px;
+      padding: 30px;
+      width: 350px;
+      box-shadow: 0 0 20px #00ff00aa;
+      text-align: center;
+    }
+    h1 {
+      margin-bottom: 0.1em;
+      font-size: 2em;
+      color: #00ff00;
+    }
+    .subtitle {
+      font-size: 1.1em;
+      margin-bottom: 20px;
+      color: #aaffaa;
+    }
+    label {
+      font-weight: bold;
+      display: block;
+      margin-bottom: 6px;
+      text-align: left;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: none;
+      margin-bottom: 15px;
+      font-size: 1em;
+    }
+    button {
+      cursor: pointer;
+      padding: 10px 18px;
+      margin: 5px;
+      border-radius: 6px;
+      border: none;
+      background-color: #00aa00;
+      color: white;
+      font-weight: bold;
+      font-size: 1em;
+      transition: background-color 0.3s ease;
+    }
+    button:disabled {
+      background-color: #555;
+      cursor: not-allowed;
+    }
+    button:hover:not(:disabled) {
+      background-color: #009900;
+    }
+    pre#output {
+      background: #003300;
+      padding: 15px;
+      margin-top: 20px;
+      border-radius: 8px;
+      text-align: left;
+      white-space: pre-wrap;
+      font-family: monospace;
+      min-height: 90px;
+      color: #b3ffb3;
+    }
+    #qrCodeContainer img {
+      margin-top: 20px;
+      width: 250px;
+      height: 250px;
+      border-radius: 10px;
+      box-shadow: 0 0 15px #00ff00;
+    }
+    footer.footer {
+      margin-top: 30px;
+      font-size: 0.9em;
+      color: #aaffaa;
+    }
+    footer.footer a {
+      color: #00ff00;
+      text-decoration: none;
+    }
+    footer.footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
 </head>
 <body>
   <div class="background">
-    <div class="overlay">
-      <div class="content">
-        <h1>Ben Whittaker Tech</h1>
-        <p class="subtitle">🟢 WhatsApp Session QR + Pairing Code Generator</p>
+    <h1>Ben Whittaker Tech</h1>
+    <p class="subtitle">🟢 WhatsApp Session QR + Pairing Code Generator</p>
 
-        <label for="phoneInput">Enter your WhatsApp number (with country code):</label><br/>
-        <input type="text" id="phoneInput" placeholder="+1234567890" style="width: 200px; padding:5px;" /><br/><br/>
+    <label for="phoneInput">Enter your WhatsApp number (with country code):</label>
+    <input type="text" id="phoneInput" placeholder="+1234567890" autocomplete="off" />
 
-        <button onclick="requestPairingCode()">🔗 Get Pairing Code</button>
-        <button onclick="getQRCode()" disabled id="qrBtn">📷 Show QR Code</button>
-
-        <pre id="output" style="white-space: pre-wrap; background:#eee; padding:10px; margin-top:20px;">
-          Enter your number and click "Get Pairing Code"
-        </pre>
-
-        <div id="qrCodeContainer" style="margin-top: 20px;"></div>
-      </div>
+    <div>
+      <button onclick="requestPairingCode()">🔗 Get Pairing Code</button>
+      <button onclick="getQRCode()" disabled id="qrBtn">📷 Show QR Code</button>
     </div>
-  </div>
 
-  <footer class="footer">
-    <p>🔗 <a href="https://github.com/lexus-SGR/Lexus.git" target="_blank">GitHub Repo</a></p>
-    <p>📞 Contact: <a href="mailto:benwhittakertech@gmail.com">benwhittakertech@gmail.com</a></p>
-    <p>📣 WhatsApp Channel: 
-      <a href="https://whatsapp.com/channel/0029Vb6JhPyBKfhv6j6msk3t" target="_blank">Join Now 🔥</a>
-    </p>
-  </footer>
+    <pre id="output">Enter your number and click "Get Pairing Code"</pre>
+
+    <div id="qrCodeContainer"></div>
+
+    <footer class="footer">
+      <p>🔗 <a href="https://github.com/lexus-SGR/Lexus.git" target="_blank" rel="noopener noreferrer">GitHub Repo</a></p>
+      <p>📞 Contact: <a href="mailto:benwhittakertech@gmail.com">benwhittakertech@gmail.com</a></p>
+      <p>📣 WhatsApp Channel: 
+        <a href="https://whatsapp.com/channel/0029Vb6JhPyBKfhv6j6msk3t" target="_blank" rel="noopener noreferrer">Join Now 🔥</a>
+      </p>
+    </footer>
+  </div>
 
   <script>
     let currentPairingCode = null;
@@ -45,19 +135,27 @@
         alert('Please enter your WhatsApp number!');
         return;
       }
-      const res = await fetch('/pairing', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ phone })
-      });
-      const data = await res.json();
-      if(data.success){
-        currentPairingCode = data.pairingCode;
-        document.getElementById('output').textContent = `Your Pairing Code is:\n\n${currentPairingCode}\n\nClick "Show QR Code" to continue.`;
-        document.getElementById('qrBtn').disabled = false;
-        document.getElementById('qrCodeContainer').innerHTML = '';
-      } else {
-        document.getElementById('output').textContent = `Error: ${data.message}`;
+      try {
+        const res = await fetch('/pairing', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ phone })
+        });
+        const data = await res.json();
+        if(data.success){
+          currentPairingCode = data.pairingCode;
+          document.getElementById('output').textContent = `Your Pairing Code is:\n\n${currentPairingCode}\n\nClick "Show QR Code" to continue.`;
+          document.getElementById('qrBtn').disabled = false;
+          document.getElementById('qrCodeContainer').innerHTML = '';
+        } else {
+          document.getElementById('output').textContent = `Error: ${data.message || "Failed to get pairing code."}`;
+          document.getElementById('qrBtn').disabled = true;
+          currentPairingCode = null;
+          document.getElementById('qrCodeContainer').innerHTML = '';
+        }
+      } catch (err) {
+        document.getElementById('output').textContent = 'Network error. Please try again later.';
+        console.error(err);
       }
     }
 
@@ -66,13 +164,19 @@
         alert('Please get a pairing code first!');
         return;
       }
-      const res = await fetch(`/qr?pairingCode=${encodeURIComponent(currentPairingCode)}`);
-      const data = await res.json();
-      if(data.qr){
-        document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
-        document.getElementById('output').textContent = "Scan the QR code with your WhatsApp to start the session.";
-      } else {
-        document.getElementById('output').textContent = data.message || "QR code is not available.";
+      try {
+        const res = await fetch(`/qr?pairingCode=${encodeURIComponent(currentPairingCode)}`);
+        const data = await res.json();
+        if(data.qr){
+          document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr}" alt="QR Code" />`;
+          document.getElementById('output').textContent = "Scan the QR code with your WhatsApp to start the session.";
+        } else {
+          document.getElementById('output').textContent = data.message || "QR code is not available.";
+          document.getElementById('qrCodeContainer').innerHTML = '';
+        }
+      } catch (err) {
+        document.getElementById('output').textContent = 'Failed to load QR code. Try again later.';
+        console.error(err);
       }
     }
   </script>
